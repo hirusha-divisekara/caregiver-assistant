@@ -3,6 +3,7 @@ import * as Linking from 'expo-linking';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -125,7 +126,11 @@ export default function AuthScreen({ onVerified }: AuthScreenProps) {
     >
       <View style={styles.container}>
         <View style={styles.logo}>
-          <Text style={styles.logoText}>+</Text>
+            <Image
+                source={require('../../assets/images/icon.png')}
+                style={styles.logoImage}
+                resizeMode="contain"
+            />
         </View>
 
         <Text style={styles.brand}>CareCircle</Text>
@@ -211,11 +216,11 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     marginBottom: 16,
   },
-  logoText: {
-    color: '#FFFFFF',
-    fontSize: 38,
-    fontWeight: '300',
-  },
+  logoImage: {
+  width: 60,
+  height: 60,
+  borderRadius: 20,
+},
   brand: {
     textAlign: 'center',
     fontSize: 28,
