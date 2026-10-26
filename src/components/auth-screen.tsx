@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import * as Linking from 'expo-linking';
 import {
   ActivityIndicator,
   Alert,
@@ -12,17 +13,80 @@ import {
 } from 'react-native';
 import { supabase } from '@/lib/supabase';
 
+const redirectTo = Linking.createURL('auth/callback');
+
 type AuthScreenProps = {
   onVerified: () => void;
 };
 
 export default function AuthScreen({ onVerified }: AuthScreenProps) {
   const [email, setEmail] = useState('');
-  const [token, setToken] = useState('');
-  const [step, setStep] = useState<'email' | 'verify'>('email');
+  const [emailSent, setEmailSent] = useState(false);
   const [loading, setLoading] = useState(false);
+    const handledUrl = useRef<string | null>(null);
+  const incomingUrl = Linking.useLinkingURL();
 
-  async function sendCode() {
+  useEffect(() => {
+    if (!incomingUrl || handledUrl.current === incomingUrl) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function handleAuthCallback(url: string) {
+      try {
+        const callbackUrl = new URL(url);
+        const errorDescription = callbackUrl.searchParams.get(
+          'error_description'
+        );
+        const errorCode = callbackUrl.searchParams.get('error');
+
+        if (errorCode || errorDescription) {
+          throw new Error(
+            errorDescription || errorCode || 'Authentication failed.'
+          );
+        }
+
+        const code = callbackUrl.searchParams.get('code');
+
+        if (!code) {
+          return;
+        }
+
+        handledUrl.current = url;
+
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+
+        if (error) {
+          throw error;
+        }
+
+        if (!cancelled) {
+          setEmailSent(false);
+          onVerified();
+        }
+      } catch (error) {
+        handledUrl.current = null;
+
+        if (!cancelled) {
+          Alert.alert(
+            'Sign-in failed',
+            error instanceof Error
+              ? error.message
+              : 'Please request a new sign-in link and try again.'
+          );
+        }
+      }
+    }
+
+    void handleAuthCallback(incomingUrl);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [incomingUrl, onVerified]);
+
+  async function sendMagicLink() {
     const cleanEmail = email.trim().toLowerCase();
 
     if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
@@ -35,51 +99,19 @@ export default function AuthScreen({ onVerified }: AuthScreenProps) {
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email: cleanEmail,
+        options: {
+          emailRedirectTo: redirectTo,
+        },
       });
 
       if (error) throw error;
 
       setEmail(cleanEmail);
-      setStep('verify');
-
-      Alert.alert(
-        'Check your email',
-        'If email delivery is configured, follow the instructions in the message.'
-      );
+      setEmailSent(true);
     } catch (error) {
       Alert.alert(
-        'Unable to continue',
+        'Unable to send email',
         error instanceof Error ? error.message : 'Please try again.'
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function verifyCode() {
-    const cleanToken = token.trim();
-
-    if (!/^\d{6}$/.test(cleanToken)) {
-      Alert.alert('Invalid code', 'Enter the 6-digit verification code.');
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const { error } = await supabase.auth.verifyOtp({
-        email,
-        token: cleanToken,
-        type: 'email',
-      });
-
-      if (error) throw error;
-
-      onVerified();
-    } catch (error) {
-      Alert.alert(
-        'Verification failed',
-        error instanceof Error ? error.message : 'Check the code and try again.'
       );
     } finally {
       setLoading(false);
@@ -100,16 +132,16 @@ export default function AuthScreen({ onVerified }: AuthScreenProps) {
         <Text style={styles.caption}>CAREGIVER ASSISTANT</Text>
 
         <Text style={styles.heading}>
-          {step === 'email' ? 'Care starts here.' : 'Check your email.'}
+          {emailSent ? 'Check your email.' : 'Care starts here.'}
         </Text>
 
         <Text style={styles.description}>
-          {step === 'email'
-            ? 'Enter your email to securely access your care dashboard.'
-            : `Enter the verification code sent to ${email}.`}
+          {emailSent
+            ? `We've sent a sign-in link to ${email}. Open the email on this device and tap the link to continue.`
+            : 'Enter your email to receive a secure sign-in link for your care dashboard.'}
         </Text>
 
-        {step === 'email' ? (
+        {!emailSent && (
           <TextInput
             style={styles.input}
             placeholder="Email address"
@@ -123,25 +155,11 @@ export default function AuthScreen({ onVerified }: AuthScreenProps) {
             editable={!loading}
             accessibilityLabel="Email address"
           />
-        ) : (
-          <TextInput
-            style={styles.input}
-            placeholder="6-digit verification code"
-            placeholderTextColor="#82918A"
-            keyboardType="number-pad"
-            maxLength={6}
-            value={token}
-            onChangeText={(value) =>
-              setToken(value.replace(/\D/g, '').slice(0, 6))
-            }
-            editable={!loading}
-            accessibilityLabel="Verification code"
-          />
         )}
 
         <Pressable
           style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={step === 'email' ? sendCode : verifyCode}
+          onPress={emailSent ? () => setEmailSent(false) : sendMagicLink}
           disabled={loading}
           accessibilityRole="button"
         >
@@ -149,28 +167,20 @@ export default function AuthScreen({ onVerified }: AuthScreenProps) {
             <ActivityIndicator color="#FFFFFF" />
           ) : (
             <Text style={styles.buttonText}>
-              {step === 'email' ? 'Continue with email' : 'Verify and sign in'}
+              {emailSent ? 'Use another email' : 'Email me a sign-in link'}
             </Text>
           )}
         </Pressable>
 
-        {step === 'verify' && (
-          <>
-            <Pressable
-              style={styles.secondaryButton}
-              onPress={() => {
-                setToken('');
-                setStep('email');
-              }}
-              disabled={loading}
-            >
-              <Text style={styles.secondaryText}>Use another email</Text>
-            </Pressable>
-
-            <Pressable onPress={sendCode} disabled={loading}>
-              <Text style={styles.secondaryText}>Send another email</Text>
-            </Pressable>
-          </>
+        {emailSent && (
+          <Pressable
+            style={styles.resendButton}
+            onPress={sendMagicLink}
+            disabled={loading}
+            accessibilityRole="button"
+          >
+            <Text style={styles.secondaryText}>Send another link</Text>
+          </Pressable>
         )}
 
         <Text style={styles.footer}>
@@ -244,11 +254,12 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   button: {
-    height: 54,
+    minHeight: 54,
     backgroundColor: '#176B5B',
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 16,
     marginTop: 4,
   },
   buttonDisabled: {
@@ -259,9 +270,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  secondaryButton: {
-    marginTop: 18,
-    marginBottom: 14,
+  resendButton: {
+    marginTop: 14,
   },
   secondaryText: {
     color: '#176B5B',

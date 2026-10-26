@@ -50,7 +50,7 @@ export default function HomeScreen() {
 }, []);
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" backgroundColor={COLORS.background} />
+      <StatusBar style="dark" />
 
       <ScrollView
         contentContainerStyle={styles.content}
